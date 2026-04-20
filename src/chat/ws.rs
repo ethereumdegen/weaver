@@ -27,6 +27,7 @@ struct ClientMessage {
     content: String,
     #[serde(default)]
     attachment_ids: Vec<Uuid>,
+    reply_to_id: Option<Uuid>,
 }
 
 async fn ws_handler<U: WeaverUser>(
@@ -89,15 +90,34 @@ async fn handle_socket(
                         continue;
                     };
 
+                    // Validate reply_to_id: must exist and not be a reply itself
+                    let reply_to_id = if let Some(rto) = client_msg.reply_to_id {
+                        let parent = sqlx::query_as::<_, Message>(
+                            "SELECT * FROM weaver_messages WHERE id = $1 AND deleted_at IS NULL",
+                        )
+                        .bind(rto)
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten();
+                        match parent {
+                            Some(p) if p.reply_to_id.is_none() => Some(rto),
+                            _ => None, // skip invalid reply targets
+                        }
+                    } else {
+                        None
+                    };
+
                     // Persist message
                     let result = sqlx::query_as::<_, Message>(
-                        "INSERT INTO weaver_messages (channel_id, user_id, user_email, content) \
-                         VALUES ($1, $2, $3, $4) RETURNING *",
+                        "INSERT INTO weaver_messages (channel_id, user_id, user_email, content, reply_to_id) \
+                         VALUES ($1, $2, $3, $4, $5) RETURNING *",
                     )
                     .bind(client_msg.channel_id)
                     .bind(&uid)
                     .bind(&uemail)
                     .bind(&client_msg.content)
+                    .bind(reply_to_id)
                     .fetch_one(&pool)
                     .await;
 
@@ -123,6 +143,25 @@ async fn handle_socket(
                         }
                     }
 
+                    // Get reply parent snippet for broadcast
+                    let reply_to = if let Some(rto) = message.reply_to_id {
+                        sqlx::query_as::<_, Message>(
+                            "SELECT * FROM weaver_messages WHERE id = $1",
+                        )
+                        .bind(rto)
+                        .fetch_optional(&pool)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|m| serde_json::json!({
+                            "id": m.id,
+                            "user_email": m.user_email,
+                            "content": m.content.chars().take(200).collect::<String>(),
+                        }))
+                    } else {
+                        None
+                    };
+
                     // Broadcast
                     let event = WsEvent::Message {
                         id: message.id,
@@ -132,6 +171,8 @@ async fn handle_socket(
                         content: message.content,
                         created_at: message.created_at.to_rfc3339(),
                         attachments: attachment_values,
+                        reply_to_id: message.reply_to_id,
+                        reply_to,
                     };
                     hub.publish(client_msg.channel_id, event).await;
                 }

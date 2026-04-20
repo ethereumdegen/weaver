@@ -21,6 +21,7 @@ pub struct Message {
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
+    pub reply_to_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]

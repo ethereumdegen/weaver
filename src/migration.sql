@@ -80,3 +80,6 @@ CREATE INDEX IF NOT EXISTS idx_weaver_comments_issue ON weaver_comments(issue_id
 -- Message edit/delete support
 ALTER TABLE weaver_messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE weaver_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
+-- Message replies (only to non-reply messages)
+ALTER TABLE weaver_messages ADD COLUMN IF NOT EXISTS reply_to_id UUID REFERENCES weaver_messages(id) ON DELETE SET NULL;

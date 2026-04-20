@@ -150,7 +150,47 @@ async fn list_messages<U: WeaverUser>(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    Ok(Json(json!({ "messages": messages })))
+    // Collect reply parent IDs and fetch them
+    let reply_ids: Vec<Uuid> = messages
+        .iter()
+        .filter_map(|m| m.reply_to_id)
+        .collect();
+
+    let reply_parents: std::collections::HashMap<Uuid, serde_json::Value> = if !reply_ids.is_empty() {
+        let parents = sqlx::query_as::<_, Message>(
+            "SELECT * FROM weaver_messages WHERE id = ANY($1)",
+        )
+        .bind(&reply_ids)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+
+        parents
+            .into_iter()
+            .map(|m| (m.id, serde_json::json!({
+                "id": m.id,
+                "user_email": m.user_email,
+                "content": m.content.chars().take(200).collect::<String>(),
+            })))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // Build response with reply_to embedded
+    let messages_json: Vec<serde_json::Value> = messages
+        .into_iter()
+        .map(|m| {
+            let reply_to = m.reply_to_id.and_then(|rid| reply_parents.get(&rid).cloned());
+            let mut val = serde_json::to_value(&m).unwrap_or_default();
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("reply_to".to_string(), serde_json::json!(reply_to));
+            }
+            val
+        })
+        .collect();
+
+    Ok(Json(json!({ "messages": messages_json })))
 }
 
 async fn update_message<U: WeaverUser>(

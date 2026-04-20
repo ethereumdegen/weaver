@@ -15,6 +15,10 @@ pub enum WsEvent {
         content: String,
         created_at: String,
         attachments: Vec<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reply_to_id: Option<Uuid>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reply_to: Option<serde_json::Value>,
     },
     ChannelCreated {
         id: Uuid,
