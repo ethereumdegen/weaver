@@ -203,7 +203,6 @@ async fn update_message<U: WeaverUser>(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Only creator can edit
     let msg = sqlx::query_as::<_, Message>(
         "SELECT * FROM weaver_messages WHERE id = $1 AND deleted_at IS NULL",
     )
@@ -213,7 +212,7 @@ async fn update_message<U: WeaverUser>(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)?;
 
-    if msg.user_id != user.user_id() {
+    if !user.can_edit_message(&msg.user_id) {
         return Err(StatusCode::FORBIDDEN);
     }
 
@@ -234,7 +233,6 @@ async fn delete_message<U: WeaverUser>(
     Extension(state): Extension<WeaverState>,
     Path(message_id): Path<Uuid>,
 ) -> Result<Json<Value>, StatusCode> {
-    // Only creator can delete
     let msg = sqlx::query_as::<_, Message>(
         "SELECT * FROM weaver_messages WHERE id = $1 AND deleted_at IS NULL",
     )
@@ -244,7 +242,7 @@ async fn delete_message<U: WeaverUser>(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)?;
 
-    if msg.user_id != user.user_id() {
+    if !user.can_delete_message(&msg.user_id) {
         return Err(StatusCode::FORBIDDEN);
     }
 

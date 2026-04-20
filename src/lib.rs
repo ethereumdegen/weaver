@@ -16,6 +16,18 @@ use uuid::Uuid;
 pub trait WeaverUser: Send + Sync + 'static {
     fn user_id(&self) -> &str;
     fn email(&self) -> &str;
+
+    /// Can this user edit a message owned by `message_user_id`?
+    /// Default: only own messages.
+    fn can_edit_message(&self, message_user_id: &str) -> bool {
+        self.user_id() == message_user_id
+    }
+
+    /// Can this user delete a message owned by `message_user_id`?
+    /// Default: only own messages.
+    fn can_delete_message(&self, message_user_id: &str) -> bool {
+        self.user_id() == message_user_id
+    }
 }
 
 /// Shared state accessible to Weaver routes via Extension.
