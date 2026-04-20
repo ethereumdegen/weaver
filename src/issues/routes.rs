@@ -116,30 +116,21 @@ async fn create_issue<U: WeaverUser>(
     if payload.title.is_empty() || payload.title.len() > 300 {
         return Err(StatusCode::BAD_REQUEST);
     }
+    if payload.description.as_ref().map_or(false, |d| d.len() > 10000) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
 
     let priority = payload.priority.as_deref().unwrap_or("medium");
     if !["urgent", "high", "medium", "low"].contains(&priority) {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Auto-increment issue number
-    let number: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(number), 0) + 1 FROM weaver_issues WHERE project_id = $1",
-    )
-    .bind(project_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("[Weaver] issue number error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
+    // Atomic issue number generation + insert
     let issue = sqlx::query_as::<_, Issue>(
         "INSERT INTO weaver_issues (project_id, number, title, description, priority, assignee_id, created_by) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+         VALUES ($1, (SELECT COALESCE(MAX(number), 0) + 1 FROM weaver_issues WHERE project_id = $1), $2, $3, $4, $5, $6) RETURNING *",
     )
     .bind(project_id)
-    .bind(number)
     .bind(&payload.title)
     .bind(payload.description.as_deref().unwrap_or(""))
     .bind(priority)
@@ -231,6 +222,9 @@ async fn update_issue<U: WeaverUser>(
     }
 
     if let Some(ref description) = payload.description {
+        if description.len() > 10000 {
+            return Err(StatusCode::BAD_REQUEST);
+        }
         sqlx::query("UPDATE weaver_issues SET description = $1, updated_at = now() WHERE id = $2")
             .bind(description)
             .bind(issue_id)
@@ -422,7 +416,7 @@ async fn create_comment<U: WeaverUser>(
     Path(issue_id): Path<Uuid>,
     Json(payload): Json<CreateComment>,
 ) -> Result<(StatusCode, Json<Value>), StatusCode> {
-    if payload.content.is_empty() {
+    if payload.content.is_empty() || payload.content.len() > 5000 {
         return Err(StatusCode::BAD_REQUEST);
     }
 

@@ -56,7 +56,9 @@ async fn handle_socket(
     // Spawn a task to forward broadcast events to the WebSocket
     let (outgoing_tx, mut outgoing_rx) = tokio::sync::mpsc::channel::<Arc<WsEvent>>(256);
 
-    for (_cid, mut rx) in receivers {
+    let mut subscribed_channels: std::collections::HashSet<Uuid> = std::collections::HashSet::new();
+    for (cid, mut rx) in receivers {
+        subscribed_channels.insert(cid);
         let tx = outgoing_tx.clone();
         tokio::spawn(async move {
             while let Ok(event) = rx.recv().await {
@@ -82,13 +84,34 @@ async fn handle_socket(
     let pool = state.pool.clone();
     let uid = user_id.clone();
     let uemail = user_email.clone();
+    let outgoing_tx_for_sub = outgoing_tx.clone();
     let recv_task = tokio::spawn(async move {
+        let mut subscribed = subscribed_channels;
         while let Some(Ok(msg)) = stream.next().await {
             match msg {
                 WsMessage::Text(text) => {
                     let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) else {
                         continue;
                     };
+
+                    // Validate content length
+                    if client_msg.content.is_empty() || client_msg.content.len() > 4000 {
+                        continue;
+                    }
+
+                    // Dynamically subscribe to channel if not already
+                    if !subscribed.contains(&client_msg.channel_id) {
+                        let mut rx = hub.subscribe(client_msg.channel_id).await;
+                        subscribed.insert(client_msg.channel_id);
+                        let tx = outgoing_tx_for_sub.clone();
+                        tokio::spawn(async move {
+                            while let Ok(event) = rx.recv().await {
+                                if tx.send(event).await.is_err() {
+                                    break;
+                                }
+                            }
+                        });
+                    }
 
                     // Validate reply_to_id: must exist and not be a reply itself
                     let reply_to_id = if let Some(rto) = client_msg.reply_to_id {

@@ -56,10 +56,21 @@ impl Hub {
     }
 
     pub async fn publish(&self, channel_id: Uuid, event: WsEvent) {
-        let map = self.channels.read().await;
-        if let Some(tx) = map.get(&channel_id) {
-            let _ = tx.send(Arc::new(event));
+        // Ensure channel entry exists before publishing
+        {
+            let map = self.channels.read().await;
+            if let Some(tx) = map.get(&channel_id) {
+                let _ = tx.send(Arc::new(event));
+                return;
+            }
         }
+        // Channel not in map — create entry and publish
+        let mut map = self.channels.write().await;
+        let tx = map.entry(channel_id).or_insert_with(|| {
+            let (tx, _) = broadcast::channel(BUFFER_CAPACITY);
+            tx
+        });
+        let _ = tx.send(Arc::new(event));
     }
 
     /// Subscribe to all channels for a given project (returns list of receivers).
