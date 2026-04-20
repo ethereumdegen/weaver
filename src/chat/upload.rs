@@ -67,14 +67,11 @@ async fn upload_file<U: WeaverUser>(
             storage_key
         );
 
-        // Create a placeholder message_id — will be updated when message is sent
-        let placeholder_msg_id = Uuid::nil();
-
+        // message_id is NULL until the message is sent and links it
         let attachment = sqlx::query_as::<_, Attachment>(
             "INSERT INTO weaver_attachments (message_id, storage_key, url, filename, file_type, file_size) \
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+             VALUES (NULL, $1, $2, $3, $4, $5) RETURNING *",
         )
-        .bind(placeholder_msg_id)
         .bind(&storage_key)
         .bind(&url)
         .bind(&filename)

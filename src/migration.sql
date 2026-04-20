@@ -24,7 +24,7 @@ CREATE INDEX IF NOT EXISTS idx_weaver_messages_channel ON weaver_messages(channe
 
 CREATE TABLE IF NOT EXISTS weaver_attachments (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    message_id  UUID NOT NULL REFERENCES weaver_messages(id) ON DELETE CASCADE,
+    message_id  UUID REFERENCES weaver_messages(id) ON DELETE CASCADE,
     storage_key TEXT NOT NULL,
     url         TEXT NOT NULL,
     filename    TEXT NOT NULL,

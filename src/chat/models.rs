@@ -24,7 +24,7 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Attachment {
     pub id: Uuid,
-    pub message_id: Uuid,
+    pub message_id: Option<Uuid>,
     pub storage_key: String,
     pub url: String,
     pub filename: String,
