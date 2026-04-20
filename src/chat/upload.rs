@@ -19,6 +19,7 @@ where
     Router::new()
         .route("/channels/{channel_id}/upload", post(upload_file::<U>))
         .route("/attachments/{attachment_id}/download", get(download_file::<U>))
+        .route("/my-attachments", get(list_my_attachments::<U>))
 }
 
 async fn upload_file<U: WeaverUser>(
@@ -90,6 +91,28 @@ async fn upload_file<U: WeaverUser>(
     }
 
     Err(StatusCode::BAD_REQUEST)
+}
+
+async fn list_my_attachments<U: WeaverUser>(
+    user: U,
+    Extension(state): Extension<WeaverState>,
+) -> Result<Json<Value>, StatusCode> {
+    let attachments = sqlx::query_as::<_, Attachment>(
+        "SELECT a.* FROM weaver_attachments a \
+         JOIN weaver_messages m ON m.id = a.message_id \
+         WHERE m.user_id = $1 \
+         ORDER BY a.created_at DESC \
+         LIMIT 200",
+    )
+    .bind(user.user_id())
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("[Weaver] list my attachments error: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(json!({ "attachments": attachments })))
 }
 
 async fn download_file<U: WeaverUser>(
