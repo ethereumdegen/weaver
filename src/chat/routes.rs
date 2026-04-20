@@ -159,7 +159,7 @@ async fn update_message<U: WeaverUser>(
     Path(message_id): Path<Uuid>,
     Json(payload): Json<UpdateMessage>,
 ) -> Result<Json<Value>, StatusCode> {
-    if payload.content.is_empty() {
+    if payload.content.is_empty() || payload.content.len() > 4000 {
         return Err(StatusCode::BAD_REQUEST);
     }
 
