@@ -76,3 +76,7 @@ CREATE TABLE IF NOT EXISTS weaver_comments (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_weaver_comments_issue ON weaver_comments(issue_id, created_at);
+
+-- Message edit/delete support
+ALTER TABLE weaver_messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+ALTER TABLE weaver_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;

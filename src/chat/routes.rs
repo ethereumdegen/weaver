@@ -5,7 +5,7 @@ use axum::{Extension, Json, Router};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::chat::models::{Channel, CreateChannel, Message, MessagesQuery};
+use crate::chat::models::{Channel, CreateChannel, Message, MessagesQuery, UpdateMessage};
 use crate::WeaverState;
 use crate::WeaverUser;
 
@@ -24,6 +24,10 @@ where
         .route(
             "/channels/{channel_id}/messages",
             get(list_messages::<U>),
+        )
+        .route(
+            "/messages/{message_id}",
+            axum::routing::patch(update_message::<U>).delete(delete_message::<U>),
         )
 }
 
@@ -123,7 +127,7 @@ async fn list_messages<U: WeaverUser>(
             .parse()
             .map_err(|_| StatusCode::BAD_REQUEST)?;
         sqlx::query_as::<_, Message>(
-            "SELECT * FROM weaver_messages WHERE channel_id = $1 AND created_at < $2 \
+            "SELECT * FROM weaver_messages WHERE channel_id = $1 AND created_at < $2 AND deleted_at IS NULL \
              ORDER BY created_at DESC LIMIT $3",
         )
         .bind(channel_id)
@@ -133,7 +137,7 @@ async fn list_messages<U: WeaverUser>(
         .await
     } else {
         sqlx::query_as::<_, Message>(
-            "SELECT * FROM weaver_messages WHERE channel_id = $1 \
+            "SELECT * FROM weaver_messages WHERE channel_id = $1 AND deleted_at IS NULL \
              ORDER BY created_at DESC LIMIT $2",
         )
         .bind(channel_id)
@@ -147,4 +151,68 @@ async fn list_messages<U: WeaverUser>(
     })?;
 
     Ok(Json(json!({ "messages": messages })))
+}
+
+async fn update_message<U: WeaverUser>(
+    user: U,
+    Extension(state): Extension<WeaverState>,
+    Path(message_id): Path<Uuid>,
+    Json(payload): Json<UpdateMessage>,
+) -> Result<Json<Value>, StatusCode> {
+    if payload.content.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Only creator can edit
+    let msg = sqlx::query_as::<_, Message>(
+        "SELECT * FROM weaver_messages WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(message_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    if msg.user_id != user.user_id() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    sqlx::query(
+        "UPDATE weaver_messages SET content = $1, updated_at = now() WHERE id = $2",
+    )
+    .bind(&payload.content)
+    .bind(message_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(json!({ "success": true })))
+}
+
+async fn delete_message<U: WeaverUser>(
+    user: U,
+    Extension(state): Extension<WeaverState>,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<Value>, StatusCode> {
+    // Only creator can delete
+    let msg = sqlx::query_as::<_, Message>(
+        "SELECT * FROM weaver_messages WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(message_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    if msg.user_id != user.user_id() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    sqlx::query("UPDATE weaver_messages SET deleted_at = now() WHERE id = $1")
+        .bind(message_id)
+        .execute(&state.pool)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(json!({ "success": true })))
 }
