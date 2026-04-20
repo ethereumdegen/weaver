@@ -150,6 +150,33 @@ async fn list_messages<U: WeaverUser>(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    // Collect message IDs for batch-loading attachments and reply parents
+    let msg_ids: Vec<Uuid> = messages.iter().map(|m| m.id).collect();
+
+    // Load attachments for all messages
+    let attachments = if !msg_ids.is_empty() {
+        sqlx::query_as::<_, crate::chat::models::Attachment>(
+            "SELECT * FROM weaver_attachments WHERE message_id = ANY($1)",
+        )
+        .bind(&msg_ids)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    let mut attachments_map: std::collections::HashMap<Uuid, Vec<serde_json::Value>> =
+        std::collections::HashMap::new();
+    for att in attachments {
+        if let Some(mid) = att.message_id {
+            attachments_map
+                .entry(mid)
+                .or_default()
+                .push(serde_json::to_value(&att).unwrap_or_default());
+        }
+    }
+
     // Collect reply parent IDs and fetch them
     let reply_ids: Vec<Uuid> = messages
         .iter()
@@ -177,14 +204,16 @@ async fn list_messages<U: WeaverUser>(
         std::collections::HashMap::new()
     };
 
-    // Build response with reply_to embedded
+    // Build response with reply_to and attachments embedded
     let messages_json: Vec<serde_json::Value> = messages
         .into_iter()
         .map(|m| {
             let reply_to = m.reply_to_id.and_then(|rid| reply_parents.get(&rid).cloned());
+            let atts = attachments_map.remove(&m.id).unwrap_or_default();
             let mut val = serde_json::to_value(&m).unwrap_or_default();
             if let Some(obj) = val.as_object_mut() {
                 obj.insert("reply_to".to_string(), serde_json::json!(reply_to));
+                obj.insert("attachments".to_string(), serde_json::json!(atts));
             }
             val
         })
