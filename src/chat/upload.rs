@@ -1,6 +1,6 @@
 use axum::extract::FromRequestParts;
 use axum::http::StatusCode;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use axum_extra::extract::Multipart;
 use serde_json::{json, Value};
@@ -16,7 +16,9 @@ where
     U: WeaverUser + FromRequestParts<S>,
     <U as FromRequestParts<S>>::Rejection: Into<axum::response::Response>,
 {
-    Router::new().route("/channels/{channel_id}/upload", post(upload_file::<U>))
+    Router::new()
+        .route("/channels/{channel_id}/upload", post(upload_file::<U>))
+        .route("/attachments/{attachment_id}/download", get(download_file::<U>))
 }
 
 async fn upload_file<U: WeaverUser>(
@@ -88,4 +90,47 @@ async fn upload_file<U: WeaverUser>(
     }
 
     Err(StatusCode::BAD_REQUEST)
+}
+
+async fn download_file<U: WeaverUser>(
+    _user: U,
+    Extension(state): Extension<WeaverState>,
+    axum::extract::Path(attachment_id): axum::extract::Path<Uuid>,
+) -> Result<axum::response::Response, StatusCode> {
+    use axum::http::header;
+    use axum::response::IntoResponse;
+
+    let bucket = state.s3_bucket.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let att = sqlx::query_as::<_, Attachment>(
+        "SELECT * FROM weaver_attachments WHERE id = $1",
+    )
+    .bind(attachment_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    let response = bucket
+        .get_object(&att.storage_key)
+        .await
+        .map_err(|e| {
+            tracing::error!("[Weaver] S3 download error: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let content_type = att.file_type.clone();
+    let disposition = if att.filename.ends_with(".md") || att.file_type.starts_with("text/") {
+        format!("inline; filename=\"{}\"", att.filename)
+    } else {
+        format!("attachment; filename=\"{}\"", att.filename)
+    };
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        response.bytes().to_vec(),
+    ).into_response())
 }
